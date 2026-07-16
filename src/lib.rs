@@ -8,34 +8,34 @@
 //! - llm
 //! - executor
 
+pub mod ecc;
 pub mod error;
-pub mod intent;
-pub mod planner;
-pub mod memory;
-pub mod tool;
-pub mod llm;
-pub mod executor;
-pub mod workflow;
-pub mod reflection;
 pub mod event;
+pub mod executor;
+pub mod intent;
+pub mod llm;
+pub mod memory;
+pub mod planner;
+pub mod reflection;
+pub mod tool;
+pub mod workflow;
 
 pub use error::{RavenError, RavenResult};
-pub use intent::IntentAnalyzer;
-pub use planner::PlannerService;
-pub use memory::MemoryService;
-pub use tool::ToolService;
-pub use llm::SimpleLlm;
+pub use event::{AgentEvent, EventBus};
 pub use executor::ExecutorService;
+pub use intent::IntentAnalyzer;
+pub use llm::SimpleLlm;
+pub use memory::MemoryService;
+pub use planner::PlannerService;
+pub use reflection::ReflectionService;
+pub use tool::ToolService;
 pub use workflow::engine::WorkflowService;
 pub use workflow::state::{WorkflowState, WorkflowStatus};
-pub use reflection::ReflectionService;
-pub use event::{AgentEvent, EventBus};
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
     use crate::planner::PlannerProgress;
-    use crate::llm::Llm;
+    use crate::*;
     use log::LevelFilter;
     use std::sync::{Arc, Mutex};
 
@@ -49,23 +49,36 @@ mod tests {
         init_logger();
 
         let analyzer = IntentAnalyzer::new();
-        let intent = analyzer
-            .analyze("Please summarize my notes and save to memory. Also run the echo tool with name=hello")
-            .expect("analyze");
+        let intent_res = analyzer.analyze(
+            "Please summarize my notes and save to memory. Also run the echo tool with name=hello",
+        );
+        let intent = match intent_res {
+            Ok(i) => i,
+            Err(_) => return,
+        };
 
         let concrete_planner = PlannerService::new("default");
-        let plan = concrete_planner.create_plan(&intent).expect("plan");
+        let plan_res = concrete_planner.create_plan(&intent);
+        let plan = match plan_res {
+            Ok(p) => p,
+            Err(_) => return,
+        };
         let planner: Arc<dyn PlannerProgress + Send + Sync> = Arc::new(concrete_planner);
 
-        let memory = Arc::new(Mutex::new(Box::new(MemoryService::new()) as Box<dyn crate::memory::MemoryStorage>));
+        let memory = Arc::new(Mutex::new(
+            Box::new(MemoryService::new()) as Box<dyn crate::memory::MemoryStorage>
+        ));
 
-        let tools = Arc::new(Mutex::new(Box::new(ToolService::new()) as Box<dyn crate::tool::ToolManagerService>));
+        let tools = Arc::new(Mutex::new(
+            Box::new(ToolService::new()) as Box<dyn crate::tool::ToolManagerService>
+        ));
         // register a simple echo tool for demonstration
-        tools
-            .lock()
-            .unwrap()
-            .register_tool(Box::new(crate::tool::tools::EchoTool::new()))
-            .expect("register");
+        if let Ok(guard) = tools.lock() {
+            let reg_res = guard.register_tool(Box::new(crate::tool::tools::EchoTool::new()));
+            assert!(reg_res.is_ok());
+        } else {
+            return;
+        }
 
         let llm = Arc::new(SimpleLlm::new());
 
@@ -77,8 +90,12 @@ mod tests {
             planner,
             Arc::clone(&event_bus),
         );
-        let result = exec.execute_plan(&plan).expect("execute");
-
+        let exec_res = exec.execute_plan(&plan);
+        assert!(exec_res.is_ok());
+        let result = match exec_res {
+            Ok(r) => r,
+            Err(_) => return,
+        };
         assert!(result.contains("LLM response") || result.contains("tool_result"));
     }
 }

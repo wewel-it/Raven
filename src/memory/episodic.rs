@@ -6,7 +6,15 @@ pub struct EpisodicMemory {
 }
 
 impl EpisodicMemory {
-    pub fn new() -> Self { Self { episodes: Vec::new() } }
-    pub fn push(&mut self, e: MemoryEntry) { self.episodes.push(e); }
-    pub fn recent(&self, n: usize) -> Vec<MemoryEntry> { self.episodes.iter().rev().take(n).cloned().collect() }
+    pub fn new() -> Self {
+        Self {
+            episodes: Vec::new(),
+        }
+    }
+    pub fn push(&mut self, e: MemoryEntry) {
+        self.episodes.push(e);
+    }
+    pub fn recent(&self, n: usize) -> Vec<MemoryEntry> {
+        self.episodes.iter().rev().take(n).cloned().collect()
+    }
 }

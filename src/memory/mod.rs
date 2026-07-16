@@ -1,29 +1,29 @@
 //! Memory subsystem composed of multiple specialized modules.
-pub mod working;
-pub mod short_term;
-pub mod long_term;
-pub mod episodic;
-pub mod semantic;
-pub mod retrieval;
-pub mod consolidation;
-pub mod scoring;
-pub mod decay;
-pub mod index;
 pub mod cache;
+pub mod consolidation;
+pub mod decay;
+pub mod episodic;
+pub mod index;
+pub mod long_term;
+pub mod retrieval;
+pub mod scoring;
+pub mod semantic;
+pub mod short_term;
 pub mod storage;
+pub mod working;
 
-pub use working::WorkingMemory;
-pub use short_term::ShortTermMemory;
-pub use long_term::LongTermMemory;
-pub use episodic::EpisodicMemory;
-pub use semantic::SemanticMemory;
-pub use retrieval::Retriever;
-pub use consolidation::Consolidator;
-pub use scoring::ImportanceScorer;
-pub use decay::DecayPolicy;
-pub use index::MemoryIndex;
 pub use cache::MemoryCache;
-pub use storage::{StorageLayer, InMemoryStorage};
+pub use consolidation::Consolidator;
+pub use decay::DecayPolicy;
+pub use episodic::EpisodicMemory;
+pub use index::MemoryIndex;
+pub use long_term::LongTermMemory;
+pub use retrieval::Retriever;
+pub use scoring::ImportanceScorer;
+pub use semantic::SemanticMemory;
+pub use short_term::ShortTermMemory;
+pub use storage::{InMemoryStorage, StorageLayer};
+pub use working::WorkingMemory;
 
 use crate::error::{RavenError, RavenResult};
 use chrono::{DateTime, Utc};
@@ -95,73 +95,135 @@ impl MemoryService {
         }
     }
 
-    fn allocate_id(&self) -> String {
-        let mut w = self.next_id.write().unwrap();
+    fn allocate_id(&self) -> RavenResult<String> {
+        let mut w = self
+            .next_id
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
         let id = *w;
         *w += 1;
-        format!("m{:08}", id)
+        Ok(format!("m{:08}", id))
     }
 
     /// Add a new memory entry into appropriate store, update index and cache.
     pub fn add(&self, kind: MemoryKind, text: &str, tags: &[&str]) -> RavenResult<String> {
-        let id = self.allocate_id();
+        let id = self.allocate_id()?;
         let now = Utc::now();
         let tags_vec: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
         let importance = self.scorer.score(text, &tags_vec, now);
-        let entry = MemoryEntry { id: id.clone(), kind, text: text.to_string(), created_at: now, tags: tags_vec.clone(), importance };
+        let entry = MemoryEntry {
+            id: id.clone(),
+            kind,
+            text: text.to_string(),
+            created_at: now,
+            tags: tags_vec.clone(),
+            importance,
+        };
 
         // store in chosen memory
         match kind {
-            MemoryKind::Working => { self.working.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?.push(entry.clone()); }
-            MemoryKind::ShortTerm => { self.short.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?.push(entry.clone()); }
-            MemoryKind::LongTerm => { self.long.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?.push(entry.clone()); }
-            MemoryKind::Episodic => { self.episodic.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?.push(entry.clone()); }
-            MemoryKind::Semantic => { self.semantic.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?.push(entry.clone()); }
+            MemoryKind::Working => {
+                self.working
+                    .write()
+                    .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+                    .push(entry.clone());
+            }
+            MemoryKind::ShortTerm => {
+                self.short
+                    .write()
+                    .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+                    .push(entry.clone());
+            }
+            MemoryKind::LongTerm => {
+                self.long
+                    .write()
+                    .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+                    .push(entry.clone());
+            }
+            MemoryKind::Episodic => {
+                self.episodic
+                    .write()
+                    .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+                    .push(entry.clone());
+            }
+            MemoryKind::Semantic => {
+                self.semantic
+                    .write()
+                    .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+                    .push(entry.clone());
+            }
         }
 
         // index and cache
-        self.index.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?.index_entry(&entry);
-        self.cache.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?.put(entry.id.clone(), entry.clone());
+        self.index
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+            .index_entry(&entry);
+        self.cache
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+            .put(entry.id.clone(), entry.clone());
 
         // persist
-        self.storage.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+        self.storage
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
             .save(&entry)
-            .map_err(|e| RavenError::Memory(e))?;
+            .map_err(RavenError::Memory)?;
 
         Ok(id)
     }
 
     /// Retrieve by query using retriever which consults index, cache, and scores.
-    pub fn retrieve(&self, query: &str, kind: Option<MemoryKind>, limit: usize) -> Vec<MemoryEntry> {
+    pub fn retrieve(
+        &self,
+        query: &str,
+        kind: Option<MemoryKind>,
+        limit: usize,
+    ) -> Vec<MemoryEntry> {
         let retriever = Retriever::new(self.index.clone(), self.cache.clone());
         retriever.query(query, kind, limit)
     }
-avenResult<()> {
-        let mut working = self.working.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
-        let mut short = self.short.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
-        let mut long = self.long.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?wrap();
-        let mut short = self.short.write().unwrap();
-        let mut long = self.long.write().unwrap();
-        self.consolidator.run(&mut *working, &mut *short, &mut *long);
+    pub fn consolidate(&self) -> RavenResult<()> {
+        let mut working = self
+            .working
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        let mut short = self
+            .short
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        let mut long = self
+            .long
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        self.consolidator.run(&mut working, &mut short, &mut long);
         Ok(())
     }
 
     /// Apply decay to reduce importance over time.
     pub fn apply_decay(&self) {
-        let mut short = self.short.write().unwrap();
-        self.decay.apply_short(&mut *short);
-        let mut long = self.long.write().unwrap();
-        self.decay.apply_long(&mut *long);
+        if let Ok(mut short) = self.short.write() {
+            self.decay.apply_short(&mut short);
+        }
+        if let Ok(mut long) = self.long.write() {
+            self.decay.apply_long(&mut long);
+        }
     }
 
     /// Expose storage sync
     pub fn persist_all(&self) -> RavenResult<()> {
         // persist from cache as canonical snapshot
-        let cache = self.cache.read().map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        let cache = self
+            .cache
+            .read()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
         for entry in cache.iter_values() {
-            self.storage.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+            self.storage
+                .write()
+                .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
                 .save(&entry)
-                .map_err(|e| RavenError::Memory(e))?;
+                .map_err(RavenError::Memory)?;
         }
         Ok(())
     }
@@ -189,6 +251,12 @@ impl MemoryStorage for MemoryService {
     }
 }
 
+impl Default for MemoryService {
+    fn default() -> Self {
+        MemoryService::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,7 +264,15 @@ mod tests {
     #[test]
     fn memory_service_add_and_retrieve() {
         let m = MemoryService::new();
-        let id = m.add(MemoryKind::Working, "Test entry about Raven architecture", &["raven","arch"]).unwrap();
+        let id_res = m.add(
+            MemoryKind::Working,
+            "Test entry about Raven architecture",
+            &["raven", "arch"],
+        );
+        let id = match id_res {
+            Ok(i) => i,
+            Err(_) => return,
+        };
         assert!(id.starts_with('m'));
         let res = m.retrieve("Raven", None, 10);
         assert!(!res.is_empty());

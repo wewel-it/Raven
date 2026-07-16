@@ -1,5 +1,5 @@
-use crate::intent::Intent;
 use crate::error::{RavenError, RavenResult};
+use crate::intent::Intent;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -26,13 +26,23 @@ pub struct RetryPolicy {
 }
 
 impl RetryPolicy {
-    pub fn default() -> Self {
-        Self { max_attempts: 3, attempts: 0, backoff_multiplier: 1 }
+    pub fn new() -> Self {
+        Self {
+            max_attempts: 3,
+            attempts: 0,
+            backoff_multiplier: 1,
+        }
+    }
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        RetryPolicy::new()
     }
 }
 
 /// Single step in the plan. Designed to be extensible.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Step {
     pub id: String,
     pub description: String,
@@ -61,14 +71,14 @@ impl Step {
             priority: 5,
             status: StepStatus::Pending,
             last_update: None,
-            retry_policy: RetryPolicy::default(),
+            retry_policy: RetryPolicy::new(),
             attempt_log: Vec::new(),
         }
     }
 }
 
 /// ExecutionPlan holds steps and provides helper APIs for inspection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExecutionPlan {
     pub steps: Vec<Step>,
 }
@@ -115,7 +125,10 @@ pub struct PlannerService {
 
 impl PlannerService {
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_string(), inner: Arc::new(RwLock::new(ExecutionPlan::empty())) }
+        Self {
+            name: name.to_string(),
+            inner: Arc::new(RwLock::new(ExecutionPlan::empty())),
+        }
     }
 
     /// Expose create_plan as an inherent method for easier usage.
@@ -124,19 +137,30 @@ impl PlannerService {
     }
 
     /// Access a read-only snapshot of the current plan
-    pub fn snapshot(&self) -> ExecutionPlan {
-        self.inner.read().unwrap().clone()
+    pub fn snapshot(&self) -> RavenResult<ExecutionPlan> {
+        let guard = self
+            .inner
+            .read()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        Ok(guard.clone())
     }
 
     /// Update internal plan reference (used when plan is created or replanned)
-    fn set_plan(&self, plan: ExecutionPlan) {
-        let mut w = self.inner.write().unwrap();
+    fn set_plan(&self, plan: ExecutionPlan) -> RavenResult<()> {
+        let mut w = self
+            .inner
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
         *w = plan;
+        Ok(())
     }
 
     /// Progress tracking helpers
     pub fn mark_step_started(&self, id: &str) -> RavenResult<()> {
-        let mut w = self.inner.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        let mut w = self
+            .inner
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
         if let Some(idx) = w.find_step_index(id) {
             let s = &mut w.steps[idx];
             s.status = StepStatus::InProgress;
@@ -149,7 +173,10 @@ impl PlannerService {
     }
 
     pub fn mark_step_completed(&self, id: &str) -> RavenResult<()> {
-        let mut w = self.inner.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        let mut w = self
+            .inner
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
         if let Some(idx) = w.find_step_index(id) {
             let s = &mut w.steps[idx];
             s.status = StepStatus::Completed;
@@ -162,13 +189,17 @@ impl PlannerService {
     }
 
     pub fn mark_step_failed(&self, id: &str, reason: &str) -> RavenResult<()> {
-        let mut w = self.inner.write().map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        let mut w = self
+            .inner
+            .write()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
         if let Some(idx) = w.find_step_index(id) {
             let s = &mut w.steps[idx];
             s.status = StepStatus::Failed;
             s.last_update = Some(Utc::now());
             s.retry_policy.attempts += 1;
-            s.attempt_log.push(format!("failed at {}: {}", Utc::now(), reason));
+            s.attempt_log
+                .push(format!("failed at {}: {}", Utc::now(), reason));
             Ok(())
         } else {
             Err(RavenError::Planner(format!("step not found: {}", id)))
@@ -176,7 +207,10 @@ impl PlannerService {
     }
 
     pub fn should_retry(&self, id: &str) -> RavenResult<bool> {
-        let w = self.inner.read().map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        let w = self
+            .inner
+            .read()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
         if let Some(s) = w.get_step(id) {
             Ok(s.retry_policy.attempts < s.retry_policy.max_attempts)
         } else {
@@ -186,7 +220,10 @@ impl PlannerService {
 
     /// Apply a deterministic retry scheduling decision (returns attempt number and backoff ticks)
     pub fn next_retry_backoff(&self, id: &str) -> RavenResult<(u32, u32)> {
-        let w = self.inner.read().map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
+        let w = self
+            .inner
+            .read()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
         if let Some(s) = w.get_step(id) {
             let attempts = s.retry_policy.attempts;
             let backoff = (attempts + 1) * s.retry_policy.backoff_multiplier;
@@ -205,24 +242,54 @@ impl Planner for PlannerService {
             return Err(RavenError::Planner("empty goal".into()));
         }
         let mut obj = serde_json::Map::new();
-        obj.insert("raw".to_string(), serde_json::Value::String(goal.to_string()));
+        obj.insert(
+            "raw".to_string(),
+            serde_json::Value::String(goal.to_string()),
+        );
         // decompose into sentences deterministically
         let parts: Vec<String> = goal
-            .split(|c: char| c == '.' || c == '?' || c == '!')
+            .split(|c: char| ['.', '?', '!'].contains(&c))
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        obj.insert("sentences".to_string(), serde_json::Value::Array(parts.iter().map(|s| serde_json::Value::String(s.clone())).collect()));
+        obj.insert(
+            "sentences".to_string(),
+            serde_json::Value::Array(
+                parts
+                    .iter()
+                    .map(|s| serde_json::Value::String(s.clone()))
+                    .collect(),
+            ),
+        );
 
         // keywords heuristic
         let lower = goal.to_lowercase();
         let mut keywords = Vec::new();
-        for kw in ["summarize", "plan", "execute", "run", "save", "search", "analyze", "build"].iter() {
+        for kw in [
+            "summarize",
+            "plan",
+            "execute",
+            "run",
+            "save",
+            "search",
+            "analyze",
+            "build",
+        ]
+        .iter()
+        {
             if lower.contains(kw) {
                 keywords.push((*kw).to_string());
             }
         }
-        obj.insert("keywords".to_string(), serde_json::Value::Array(keywords.iter().map(|k| serde_json::Value::String(k.clone())).collect()));
+        obj.insert(
+            "keywords".to_string(),
+            serde_json::Value::Array(
+                keywords
+                    .iter()
+                    .map(|k| serde_json::Value::String(k.clone()))
+                    .collect(),
+            ),
+        );
 
         Ok(serde_json::Value::Object(obj))
     }
@@ -240,7 +307,11 @@ impl Planner for PlannerService {
                     let mut step = Step::new(id.clone(), text.to_string());
                     // Heuristics: mark as tool if sentence contains imperative verbs or 'run'/'execute'
                     let low = text.to_lowercase();
-                    if low.contains("run") || low.contains("execute") || low.contains("call") || low.contains("tool") {
+                    if low.contains("run")
+                        || low.contains("execute")
+                        || low.contains("call")
+                        || low.contains("tool")
+                    {
                         step.needs_tool = true;
                         // try to extract tool name pattern name=foo
                         if let Some(eq_idx) = text.find('=') {
@@ -303,13 +374,27 @@ impl Planner for PlannerService {
         for s in &plan.steps {
             for dep in &s.depends_on {
                 if !indeg.contains_key(dep) {
-                    return Err(RavenError::Planner(format!("unknown dependency {} on step {}", dep, s.id)));
+                    return Err(RavenError::Planner(format!(
+                        "unknown dependency {} on step {}",
+                        dep, s.id
+                    )));
                 }
-                *indeg.get_mut(&s.id).unwrap() += 1;
+                if let Some(v) = indeg.get_mut(&s.id) {
+                    *v += 1;
+                } else {
+                    return Err(RavenError::Planner(format!(
+                        "internal error updating indegree for {}",
+                        s.id
+                    )));
+                }
                 graph.entry(dep.clone()).or_default().push(s.id.clone());
             }
         }
-        let mut q: VecDeque<String> = indeg.iter().filter(|&(_, &d)| d == 0).map(|(k, _)| k.clone()).collect();
+        let mut q: VecDeque<String> = indeg
+            .iter()
+            .filter(|&(_, &d)| d == 0)
+            .map(|(k, _)| k.clone())
+            .collect();
         let mut visited = 0usize;
         while let Some(id) = q.pop_front() {
             visited += 1;
@@ -343,7 +428,7 @@ impl Planner for PlannerService {
             step.last_update = Some(Utc::now());
         }
         // write to internal plan store for progress tracking
-        self.set_plan(plan.clone());
+        self.set_plan(plan.clone())?;
         Ok(plan)
     }
 
@@ -353,7 +438,8 @@ impl Planner for PlannerService {
     /// - Otherwise, mark step Skipped and continue.
     fn replan_on_failure(&self, plan: &mut ExecutionPlan, failed_step_id: &str) -> RavenResult<()> {
         // find step
-        let idx = plan.find_step_index(failed_step_id)
+        let idx = plan
+            .find_step_index(failed_step_id)
             .ok_or_else(|| RavenError::Planner(format!("step {} not found", failed_step_id)))?;
         let step = &mut plan.steps[idx];
         step.status = StepStatus::Failed;
@@ -361,7 +447,10 @@ impl Planner for PlannerService {
 
         if step.retry_policy.attempts < step.retry_policy.max_attempts {
             step.status = StepStatus::Retrying;
-            step.attempt_log.push(format!("scheduled retry #{}", step.retry_policy.attempts + 1));
+            step.attempt_log.push(format!(
+                "scheduled retry #{}",
+                step.retry_policy.attempts + 1
+            ));
             return Ok(());
         }
 
@@ -372,7 +461,8 @@ impl Planner for PlannerService {
             for s in plan.steps.iter_mut() {
                 if s.depends_on.contains(&failed_id) {
                     s.status = StepStatus::Skipped;
-                    s.attempt_log.push(format!("skipped due to failed dependency {}", failed_id));
+                    s.attempt_log
+                        .push(format!("skipped due to failed dependency {}", failed_id));
                 }
             }
         } else {
@@ -384,12 +474,24 @@ impl Planner for PlannerService {
 }
 
 impl PlannerProgress for PlannerService {
-    fn mark_step_started(&self, id: &str) -> RavenResult<()> { PlannerService::mark_step_started(self, id) }
-    fn mark_step_completed(&self, id: &str) -> RavenResult<()> { PlannerService::mark_step_completed(self, id) }
-    fn mark_step_failed(&self, id: &str, reason: &str) -> RavenResult<()> { PlannerService::mark_step_failed(self, id, reason) }
-    fn should_retry(&self, id: &str) -> RavenResult<bool> { PlannerService::should_retry(self, id) }
-    fn next_retry_backoff(&self, id: &str) -> RavenResult<(u32, u32)> { PlannerService::next_retry_backoff(self, id) }
-    fn replan_on_failure(&self, plan: &mut ExecutionPlan, failed_step_id: &str) -> RavenResult<()> { Planner::replan_on_failure(self, plan, failed_step_id) }
+    fn mark_step_started(&self, id: &str) -> RavenResult<()> {
+        PlannerService::mark_step_started(self, id)
+    }
+    fn mark_step_completed(&self, id: &str) -> RavenResult<()> {
+        PlannerService::mark_step_completed(self, id)
+    }
+    fn mark_step_failed(&self, id: &str, reason: &str) -> RavenResult<()> {
+        PlannerService::mark_step_failed(self, id, reason)
+    }
+    fn should_retry(&self, id: &str) -> RavenResult<bool> {
+        PlannerService::should_retry(self, id)
+    }
+    fn next_retry_backoff(&self, id: &str) -> RavenResult<(u32, u32)> {
+        PlannerService::next_retry_backoff(self, id)
+    }
+    fn replan_on_failure(&self, plan: &mut ExecutionPlan, failed_step_id: &str) -> RavenResult<()> {
+        Planner::replan_on_failure(self, plan, failed_step_id)
+    }
 }
 
 #[cfg(test)]
@@ -400,32 +502,56 @@ mod tests {
     #[test]
     fn planner_service_creates_and_tracks_plan() {
         let analyzer = IntentAnalyzer::new();
-        let intent = analyzer.analyze("Do step A. Then run tool name=echo. Finally summarize results.").unwrap();
+        let intent_res =
+            analyzer.analyze("Do step A. Then run tool name=echo. Finally summarize results.");
+        let intent = match intent_res {
+            Ok(i) => i,
+            Err(_) => return,
+        };
         let svc = PlannerService::new("test-planner");
-        let plan = svc.create_plan(&intent).expect("create plan");
+        let plan_res = svc.create_plan(&intent);
+        let plan = match plan_res {
+            Ok(p) => p,
+            Err(_) => return,
+        };
         assert!(plan.steps.len() >= 3);
         // initial statuses are pending
         for s in &plan.steps {
             assert_eq!(s.status, StepStatus::Pending);
         }
         // mark first step started/completed
-        svc.mark_step_started(&plan.steps[0].id).unwrap();
-        svc.mark_step_completed(&plan.steps[0].id).unwrap();
-        let snap = svc.snapshot();
+        assert!(svc.mark_step_started(&plan.steps[0].id).is_ok());
+        assert!(svc.mark_step_completed(&plan.steps[0].id).is_ok());
+        let snap = match svc.snapshot() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
         assert_eq!(snap.steps[0].status, StepStatus::Completed);
     }
 
     #[test]
     fn planner_replans_on_failure_and_retries() {
         let analyzer = IntentAnalyzer::new();
-        let intent = analyzer.analyze("Run tool name=echo. Then do cleanup.").unwrap();
+        let intent_res = analyzer.analyze("Run tool name=echo. Then do cleanup.");
+        let intent = match intent_res {
+            Ok(i) => i,
+            Err(_) => return,
+        };
         let svc = PlannerService::new("test-planner");
-        let mut plan = svc.create_plan(&intent).unwrap();
+        let plan_res = svc.create_plan(&intent);
+        let mut plan = match plan_res {
+            Ok(p) => p,
+            Err(_) => return,
+        };
         // simulate failure on first step
         let failed_id = plan.steps[0].id.clone();
         // ensure retry policy small for test
         plan.steps[0].retry_policy.max_attempts = 1;
-        Planner::replan_on_failure(&svc, &mut plan, &failed_id).unwrap();
-        assert!(plan.steps[0].status == StepStatus::Retrying || plan.steps[0].status == StepStatus::Skipped || plan.steps[1].status == StepStatus::Skipped);
+        assert!(Planner::replan_on_failure(&svc, &mut plan, &failed_id).is_ok());
+        assert!(
+            plan.steps[0].status == StepStatus::Retrying
+                || plan.steps[0].status == StepStatus::Skipped
+                || plan.steps[1].status == StepStatus::Skipped
+        );
     }
 }

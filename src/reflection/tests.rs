@@ -11,5 +11,8 @@ fn reflection_service_evaluates_workflow_status() {
     let report = engine.evaluate("test-plan", &status);
     assert_eq!(report.workflow_state, WorkflowState::Completed);
     assert!(report.summary.contains("completed successfully"));
-    assert!(report.items_to_store.iter().any(|item| item.contains("completed steps count")));
+    assert!(report
+        .items_to_store
+        .iter()
+        .any(|item| item.contains("completed steps count")));
 }

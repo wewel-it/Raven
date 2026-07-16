@@ -1,3 +1,4 @@
+use crate::error::RavenResult;
 use crate::memory::{MemoryKind, MemoryStorage};
 use crate::workflow::state::{WorkflowState, WorkflowStatus};
 use serde_json::json;
@@ -31,7 +32,7 @@ impl ReflectionReport {
 /// Reflection service performs deterministic evaluation without using an LLM.
 pub trait ReflectionEvaluator: Send + Sync {
     fn evaluate(&self, plan_name: &str, status: &WorkflowStatus) -> ReflectionReport;
-    fn commit(&self, manager: &dyn MemoryStorage, report: ReflectionReport) -> Result<String, String>;
+    fn commit(&self, manager: &dyn MemoryStorage, report: ReflectionReport) -> RavenResult<String>;
 }
 
 pub struct ReflectionService;
@@ -53,7 +54,8 @@ impl ReflectionService {
                 if status.completed_steps.is_empty() {
                     summary_parts.push("No steps were recorded as completed.".to_string());
                 } else {
-                    summary_parts.push(format!("Completed {} steps.", status.completed_steps.len()));
+                    summary_parts
+                        .push(format!("Completed {} steps.", status.completed_steps.len()));
                 }
             }
             WorkflowState::Failed => {
@@ -85,13 +87,19 @@ impl ReflectionService {
                 discard.push("in-progress transient state".to_string());
             }
             WorkflowState::Pending => {
-                summary_parts.push(format!("Workflow '{}' is pending and has not run yet.", plan_name));
+                summary_parts.push(format!(
+                    "Workflow '{}' is pending and has not run yet.",
+                    plan_name
+                ));
                 discard.push("pending metadata".to_string());
             }
         }
 
         if !status.completed_steps.is_empty() {
-            store.push(format!("completed steps count: {}", status.completed_steps.len()));
+            store.push(format!(
+                "completed steps count: {}",
+                status.completed_steps.len()
+            ));
         }
 
         if status.failed_step.is_some() {
@@ -110,7 +118,11 @@ impl ReflectionService {
         }
     }
 
-    pub fn commit(&self, manager: &dyn MemoryStorage, report: ReflectionReport) -> Result<String, String> {
+    pub fn commit(
+        &self,
+        manager: &dyn MemoryStorage,
+        report: ReflectionReport,
+    ) -> RavenResult<String> {
         let text = report.summarize();
         let tags = ["reflection"];
         manager.add(MemoryKind::Episodic, &text, &tags)
@@ -122,7 +134,13 @@ impl ReflectionEvaluator for ReflectionService {
         self.evaluate(plan_name, status)
     }
 
-    fn commit(&self, manager: &dyn MemoryStorage, report: ReflectionReport) -> Result<String, String> {
+    fn commit(&self, manager: &dyn MemoryStorage, report: ReflectionReport) -> RavenResult<String> {
         self.commit(manager, report)
+    }
+}
+
+impl Default for ReflectionService {
+    fn default() -> Self {
+        ReflectionService::new()
     }
 }

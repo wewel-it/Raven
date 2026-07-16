@@ -29,12 +29,17 @@ pub trait Tool: Send + Sync {
 pub trait ToolManagerService: Send + Sync {
     fn register_tool(&self, tool: Box<dyn Tool>) -> Result<(), ToolError>;
     fn unregister_tool(&self, name: &str) -> Option<std::sync::Arc<dyn Tool>>;
-    fn invoke(&self, name: &str, params: &Value, context: &ExecutionContext) -> Result<ToolResult, ToolError>;
+    fn invoke(
+        &self,
+        name: &str,
+        params: &Value,
+        context: &ExecutionContext,
+    ) -> Result<ToolResult, ToolError>;
     fn has_tool(&self, name: &str) -> bool;
 }
 
-pub use manage::ToolService;
-pub use errors::ToolError;
 pub use context::ExecutionContext;
+pub use errors::ToolError;
+pub use manage::ToolService;
 pub use result::ToolResult;
 pub use schema::ToolSchema;

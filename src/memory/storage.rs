@@ -13,7 +13,11 @@ pub struct InMemoryStorage {
 }
 
 impl InMemoryStorage {
-    pub fn new() -> Self { Self { map: Mutex::new(HashMap::new()) } }
+    pub fn new() -> Self {
+        Self {
+            map: Mutex::new(HashMap::new()),
+        }
+    }
 }
 
 impl StorageLayer for InMemoryStorage {
@@ -26,5 +30,11 @@ impl StorageLayer for InMemoryStorage {
     fn load_all(&self) -> Result<Vec<MemoryEntry>, String> {
         let m = self.map.lock().map_err(|e| format!("lock error: {}", e))?;
         Ok(m.values().cloned().collect())
+    }
+}
+
+impl Default for InMemoryStorage {
+    fn default() -> Self {
+        InMemoryStorage::new()
     }
 }

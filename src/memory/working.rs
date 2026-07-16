@@ -7,14 +7,31 @@ pub struct WorkingMemory {
 }
 
 impl WorkingMemory {
-    pub fn new() -> Self { Self { queue: VecDeque::new() } }
-    pub fn push(&mut self, entry: MemoryEntry) { self.queue.push_back(entry); }
-    pub fn pop_oldest(&mut self) -> Option<MemoryEntry> { self.queue.pop_front() }
-    pub fn len(&self) -> usize { self.queue.len() }
+    pub fn new() -> Self {
+        Self {
+            queue: VecDeque::new(),
+        }
+    }
+    pub fn push(&mut self, entry: MemoryEntry) {
+        self.queue.push_back(entry);
+    }
+    pub fn pop_oldest(&mut self) -> Option<MemoryEntry> {
+        self.queue.pop_front()
+    }
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
     pub fn drain_to_vec(&mut self, limit: usize) -> Vec<MemoryEntry> {
         let mut out = Vec::new();
         for _ in 0..limit {
-            if let Some(e) = self.queue.pop_front() { out.push(e); } else { break; }
+            if let Some(e) = self.queue.pop_front() {
+                out.push(e);
+            } else {
+                break;
+            }
         }
         out
     }

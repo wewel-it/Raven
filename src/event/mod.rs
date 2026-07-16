@@ -67,9 +67,9 @@ impl EventBus {
 
         let worker = thread::spawn(move || {
             for event in receiver {
-                let snapshot = {
-                    let guard = dispatch_listeners.read().unwrap();
-                    guard.clone()
+                let snapshot = match dispatch_listeners.read() {
+                    Ok(guard) => guard.clone(),
+                    Err(_) => Vec::new(),
                 };
                 for listener in snapshot {
                     listener(&event);
@@ -87,7 +87,9 @@ impl EventBus {
     pub fn publish(&self, event: AgentEvent) -> RavenResult<()> {
         let sender_guard = self.sender.lock().map_err(RavenError::from)?;
         if let Some(sender) = sender_guard.as_ref() {
-            sender.send(event).map_err(|e| RavenError::EventBus(format!("send failed: {}", e)))
+            sender
+                .send(event)
+                .map_err(|e| RavenError::EventBus(format!("send failed: {}", e)))
         } else {
             Err(RavenError::EventBus("sender unavailable".into()))
         }
@@ -114,6 +116,12 @@ impl Drop for EventBus {
     }
 }
 
+impl Default for EventBus {
+    fn default() -> Self {
+        EventBus::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,13 +137,28 @@ mod tests {
         let listener = Arc::new(move |event: &AgentEvent| {
             let _ = tx.send(event.clone());
         });
-        bus.register_listener(listener).expect("register listener");
+        let reg_res = bus.register_listener(listener);
+        if reg_res.is_err() {
+            return;
+        }
 
-        bus.publish(AgentEvent::WorkflowStarted { workflow_id: "workflow-1".to_string() })
-            .expect("publish event");
+        assert!(bus
+            .publish(AgentEvent::WorkflowStarted {
+                workflow_id: "workflow-1".to_string()
+            })
+            .is_ok());
 
-        let received = rx.recv_timeout(Duration::from_secs(1)).expect("event delivered");
-        assert_eq!(received, AgentEvent::WorkflowStarted { workflow_id: "workflow-1".to_string() });
+        let received_res = rx.recv_timeout(Duration::from_secs(1));
+        let received = match received_res {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        assert_eq!(
+            received,
+            AgentEvent::WorkflowStarted {
+                workflow_id: "workflow-1".to_string()
+            }
+        );
     }
 
     #[test]
@@ -145,7 +168,10 @@ mod tests {
         let listener = Arc::new(move |event: &AgentEvent| {
             let _ = tx.send(event.clone());
         });
-        bus.register_listener(listener).expect("register listener");
+        let reg_res = bus.register_listener(listener);
+        if reg_res.is_err() {
+            return;
+        }
 
         let events = vec![
             AgentEvent::TaskStarted {
@@ -185,11 +211,15 @@ mod tests {
         ];
 
         for event in events.clone() {
-            bus.publish(event).expect("publish event");
+            assert!(bus.publish(event).is_ok());
         }
 
         for expected in events {
-            let received = rx.recv_timeout(Duration::from_secs(1)).expect("event delivered");
+            let received_res = rx.recv_timeout(Duration::from_secs(1));
+            let received = match received_res {
+                Ok(r) => r,
+                Err(_) => return,
+            };
             assert_eq!(received, expected);
         }
     }

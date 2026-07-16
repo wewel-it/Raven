@@ -63,4 +63,14 @@ impl WorkflowStatus {
         self.last_error = Some(error);
         self.updated_at = Utc::now();
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.completed_steps.is_empty() && self.current_step.is_none() && self.failed_step.is_none()
+    }
+}
+
+impl Default for WorkflowStatus {
+    fn default() -> Self {
+        WorkflowStatus::new()
+    }
 }

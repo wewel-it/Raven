@@ -9,9 +9,19 @@ pub struct ExecutionContext {
     pub metadata: HashMap<String, Value>,
 }
 
+impl Default for ExecutionContext {
+    fn default() -> Self {
+        ExecutionContext::new()
+    }
+}
+
 impl ExecutionContext {
     pub fn new() -> Self {
-        Self { caller_id: None, permissions: Vec::new(), metadata: HashMap::new() }
+        Self {
+            caller_id: None,
+            permissions: Vec::new(),
+            metadata: HashMap::new(),
+        }
     }
 
     pub fn with_caller(mut self, caller_id: impl Into<String>) -> Self {

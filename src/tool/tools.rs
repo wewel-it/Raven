@@ -11,6 +11,12 @@ impl EchoTool {
     }
 }
 
+impl Default for EchoTool {
+    fn default() -> Self {
+        EchoTool::new()
+    }
+}
+
 impl Tool for EchoTool {
     fn name(&self) -> &str {
         "echo"

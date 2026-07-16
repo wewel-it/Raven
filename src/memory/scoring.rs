@@ -4,7 +4,9 @@ use chrono::{DateTime, Utc};
 pub struct ImportanceScorer {}
 
 impl ImportanceScorer {
-    pub fn default() -> Self { Self {} }
+    pub fn new() -> Self {
+        Self {}
+    }
 
     pub fn score(&self, text: &str, tags: &[String], created: DateTime<Utc>) -> f32 {
         let len_score = (text.len() as f32).min(2000.0) / 2000.0;
@@ -16,5 +18,7 @@ impl ImportanceScorer {
 }
 
 impl Default for ImportanceScorer {
-    fn default() -> Self { ImportanceScorer::default() }
+    fn default() -> Self {
+        ImportanceScorer::new()
+    }
 }

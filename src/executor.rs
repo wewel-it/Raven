@@ -1,9 +1,9 @@
-use crate::event::{AgentEvent, EventBus};
 use crate::error::{RavenError, RavenResult};
+use crate::event::{AgentEvent, EventBus};
 use crate::llm::Llm;
 use crate::memory::{MemoryKind, MemoryStorage};
-use crate::planner::{ExecutionPlan, Step, PlannerProgress};
-use crate::tool::{ToolError, ToolManagerService};
+use crate::planner::{ExecutionPlan, PlannerProgress, Step};
+use crate::tool::ToolManagerService;
 use log::{error, info};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -30,7 +30,13 @@ impl ExecutorService {
         planner: Arc<dyn PlannerProgress + Send + Sync>,
         event_bus: Arc<EventBus>,
     ) -> Self {
-        Self { memory, tools, llm, planner, event_bus }
+        Self {
+            memory,
+            tools,
+            llm,
+            planner,
+            event_bus,
+        }
     }
 
     /// Execute an entire plan and return an aggregated string result.
@@ -56,8 +62,12 @@ impl ExecutorService {
                         if let Err(e) = self.planner.mark_step_completed(&step.id) {
                             error!("failed to mark step completed {}: {}", step.id, e);
                         }
-                        let memory_id = match self.memory.lock().map_err(|e| RavenError::LockPoisoned(e.to_string()))?
-                            .add(MemoryKind::Working, &s, &[step.id.as_str()]) {
+                        let memory_id = match self
+                            .memory
+                            .lock()
+                            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+                            .add(MemoryKind::Working, &s, &[step.id.as_str()])
+                        {
                             Ok(id) => {
                                 let _ = self.event_bus.publish(AgentEvent::MemoryUpdated {
                                     memory_id: id.clone(),
@@ -90,8 +100,13 @@ impl ExecutorService {
                         // consult planner whether to retry
                         match self.planner.should_retry(&step.id) {
                             Ok(true) => {
-                                if let Ok((attempt_no, backoff)) = self.planner.next_retry_backoff(&step.id) {
-                                    info!("Retrying step {} attempt {} backoff {}", step.id, attempt_no, backoff);
+                                if let Ok((attempt_no, backoff)) =
+                                    self.planner.next_retry_backoff(&step.id)
+                                {
+                                    info!(
+                                        "Retrying step {} attempt {} backoff {}",
+                                        step.id, attempt_no, backoff
+                                    );
                                 } else {
                                     info!("Retrying step {} (attempt info unavailable)", step.id);
                                 }
@@ -109,10 +124,17 @@ impl ExecutorService {
                                     error!("fatal failure on critical step {}", step.id);
                                     // attempt replanning for record-keeping
                                     let mut cloned_plan = plan.clone();
-                                    let _ = self.planner.replan_on_failure(&mut cloned_plan, &step.id);
-                                    return Err(RavenError::Executor(format!("fatal failure on step {}: {}", step.id, err_msg)));
+                                    let _ =
+                                        self.planner.replan_on_failure(&mut cloned_plan, &step.id);
+                                    return Err(RavenError::Executor(format!(
+                                        "fatal failure on step {}: {}",
+                                        step.id, err_msg
+                                    )));
                                 } else {
-                                    info!("Non-critical step {} failed and will be skipped", step.id);
+                                    info!(
+                                        "Non-critical step {} failed and will be skipped",
+                                        step.id
+                                    );
                                     outputs.push(format!("[error:{}]", err_msg));
                                     break;
                                 }
@@ -132,8 +154,12 @@ impl ExecutorService {
         }
 
         // Optionally consolidate memory after execution
-        if let Err(e) = self.memory.lock().map_err(|e| RavenError::LockPoisoned(e.to_string()))?
-            .consolidate() {
+        if let Err(e) = self
+            .memory
+            .lock()
+            .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+            .consolidate()
+        {
             error!("memory consolidation failed: {}", e);
         }
 
@@ -149,8 +175,12 @@ impl ExecutorService {
                 tool_name: tool_name.to_string(),
                 params: params.clone(),
             });
-            let outcome = match self.tools.lock().map_err(|e| RavenError::LockPoisoned(e.to_string()))?
-                .invoke(tool_name, params, &context) {
+            let outcome = match self
+                .tools
+                .lock()
+                .map_err(|e| RavenError::LockPoisoned(e.to_string()))?
+                .invoke(tool_name, params, &context)
+            {
                 Ok(result) => {
                     let _ = self.event_bus.publish(AgentEvent::ToolCompleted {
                         tool_name: tool_name.to_string(),
@@ -165,9 +195,7 @@ impl ExecutorService {
             // Use LLM to handle content generation or processing
             let prompt = &step.description;
             let context = step.params.as_ref();
-            self.llm
-                .generate(prompt, context)
-                .map_err(|e| RavenError::Llm(e))
+            self.llm.generate(prompt, context)
         }
     }
 }

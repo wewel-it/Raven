@@ -11,9 +11,17 @@ pub struct ToolService {
     registry: ToolRegistry,
 }
 
+impl Default for ToolService {
+    fn default() -> Self {
+        ToolService::new()
+    }
+}
+
 impl ToolService {
     pub fn new() -> Self {
-        Self { registry: ToolRegistry::new() }
+        Self {
+            registry: ToolRegistry::new(),
+        }
     }
 
     pub fn register_tool(&self, tool: Box<dyn Tool>) -> Result<(), ToolError> {
@@ -24,7 +32,12 @@ impl ToolService {
         self.registry.unregister(name)
     }
 
-    pub fn invoke(&self, name: &str, params: &Value, context: &ExecutionContext) -> Result<ToolResult, ToolError> {
+    pub fn invoke(
+        &self,
+        name: &str,
+        params: &Value,
+        context: &ExecutionContext,
+    ) -> Result<ToolResult, ToolError> {
         let tool = self.registry.get(name)?;
         let tool_ref: &dyn Tool = tool.as_ref();
         self.check_permissions(tool_ref, context)?;
@@ -41,10 +54,18 @@ impl ToolService {
         tool.validate(params)
     }
 
-    fn check_permissions(&self, tool: &dyn Tool, context: &ExecutionContext) -> Result<(), ToolError> {
+    fn check_permissions(
+        &self,
+        tool: &dyn Tool,
+        context: &ExecutionContext,
+    ) -> Result<(), ToolError> {
         if let Some(required) = tool.required_permission() {
             if !context.has_permission(required) {
-                return Err(ToolError::permission_denied(format!("missing permission {} for tool {}", required, tool.name())));
+                return Err(ToolError::permission_denied(format!(
+                    "missing permission {} for tool {}",
+                    required,
+                    tool.name()
+                )));
             }
         }
         Ok(())
@@ -60,7 +81,12 @@ impl ToolManagerService for ToolService {
         ToolService::unregister_tool(self, name)
     }
 
-    fn invoke(&self, name: &str, params: &Value, context: &ExecutionContext) -> Result<ToolResult, ToolError> {
+    fn invoke(
+        &self,
+        name: &str,
+        params: &Value,
+        context: &ExecutionContext,
+    ) -> Result<ToolResult, ToolError> {
         ToolService::invoke(self, name, params, context)
     }
 
