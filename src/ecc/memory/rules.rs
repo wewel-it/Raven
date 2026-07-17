@@ -219,7 +219,7 @@ impl Rule<MemoryValidationEntry> for TextMaxLengthRule {
     }
 
     fn evaluate(&self, entry: &MemoryValidationEntry) -> MemoryEccResult<Vec<EccIssue>> {
-        let text_len = entry.entry.text.as_bytes().len();
+        let text_len = entry.entry.text.len();
 
         if text_len > MEMORY_TEXT_MAX_BYTES {
             return Ok(vec![EccIssue::new(
@@ -260,7 +260,7 @@ impl Rule<MemoryValidationEntry> for ImportanceInRangeRule {
     fn evaluate(&self, entry: &MemoryValidationEntry) -> MemoryEccResult<Vec<EccIssue>> {
         let importance = entry.entry.importance;
 
-        if importance < 0.0 || importance > 1.0 {
+        if !(0.0..=1.0).contains(&importance) {
             return Ok(vec![EccIssue::new(
                 MemoryIssueKind::ImportanceOutOfRange.category().to_string(),
                 "Importance score out of range".to_string(),
@@ -398,14 +398,14 @@ impl Rule<MemoryValidationEntry> for TagsValidStringsRule {
                 )]);
             }
 
-            if tag.as_bytes().len() > MEMORY_TAG_MAX_BYTES {
+            if tag.len() > MEMORY_TAG_MAX_BYTES {
                 return Ok(vec![EccIssue::new(
                     MemoryIssueKind::TagsInvalid.category().to_string(),
                     "Tag exceeds maximum length".to_string(),
                     Some(format!(
                         "Tag at index {} is {} bytes, max is {}",
                         idx,
-                        tag.as_bytes().len(),
+                        tag.len(),
                         MEMORY_TAG_MAX_BYTES
                     )),
                     Some("field: tags".to_string()),

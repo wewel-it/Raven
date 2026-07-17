@@ -181,7 +181,7 @@ mod integration_tests {
 
         let (_final_entry, report) = result.unwrap();
         let confidence = report.confidence();
-        assert!(confidence >= 0.0 && confidence <= 1.0);
+        assert!((0.0..=1.0).contains(&confidence));
         assert!(confidence > 0.9); // Valid entry should have high confidence
     }
 

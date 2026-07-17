@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn test_corrector_trims_text() {
         let corrector = MemoryCorrector::new();
-        let mut entry = create_entry_with_issues();
+        let entry = create_entry_with_issues();
         let original_text = entry.entry.text.clone();
 
         let report = crate::ecc::report::ValidationReport::new(
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn test_corrector_removes_duplicate_tags() {
         let corrector = MemoryCorrector::new();
-        let mut entry = create_entry_with_issues();
+        let entry = create_entry_with_issues();
         assert_eq!(entry.entry.tags.len(), 3);
 
         let report = crate::ecc::report::ValidationReport::new(

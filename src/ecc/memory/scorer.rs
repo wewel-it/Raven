@@ -146,9 +146,7 @@ mod tests {
         let mut context = create_context();
 
         context.applied_fixes.push("trim_text".to_string());
-        context
-            .applied_fixes
-            .push("normalize_tags".to_string());
+        context.applied_fixes.push("normalize_tags".to_string());
 
         let result = scorer.score(&context);
         assert!(result.is_ok());

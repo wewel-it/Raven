@@ -13,8 +13,10 @@ pub mod planner;
 pub mod policy;
 pub mod report;
 pub mod rules;
+pub mod tool;
 pub mod traits;
 pub mod validator;
+pub mod workflow;
 
 pub use corrector::CompositeCorrector;
 pub use engine::EccEngine;
