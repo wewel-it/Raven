@@ -434,6 +434,14 @@ impl Planner for PlannerService {
             }
             step.last_update = Some(Utc::now());
         }
+        // attach retrieved knowledge summary into plan step metadata
+        if let Some(summary) = intent.metadata.get("knowledge_summary") {
+            for step in plan.steps.iter_mut() {
+                step.metadata
+                    .insert("knowledge_summary".to_string(), summary.clone());
+            }
+        }
+
         // write to internal plan store for progress tracking
         self.set_plan(plan.clone())?;
         Ok(plan)

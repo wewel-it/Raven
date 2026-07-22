@@ -1,9 +1,13 @@
+use crate::agent::runtime::context::RuntimeContext;
 use crate::error::RavenResult;
 use crate::executor::Executor;
 use crate::planner::ExecutionPlan;
 use crate::workflow::engine::WorkflowController;
 use std::sync::{Arc, Mutex};
+/// PlannerRuntime combines planner creation and progress tracking for runtime.
+pub trait PlannerRuntime: crate::planner::Planner + crate::planner::PlannerProgress {}
 
+impl<T> PlannerRuntime for T where T: crate::planner::Planner + crate::planner::PlannerProgress {}
 /// Minimal runtime trait to execute a plan and return a report string.
 pub trait AgentRuntime: Send + Sync {
     fn run_plan(&self, plan: &ExecutionPlan) -> RavenResult<String>;
@@ -11,7 +15,11 @@ pub trait AgentRuntime: Send + Sync {
 
 /// Factory trait for building workflow controllers with a selected executor.
 pub trait WorkflowFactory: Send + Sync {
-    fn build(&self, executor: Arc<dyn Executor>) -> Arc<dyn WorkflowController>;
+    fn build(
+        &self,
+        executor: Arc<dyn Executor>,
+        runtime_context: Option<RuntimeContext>,
+    ) -> Arc<dyn WorkflowController>;
 }
 
 /// Default runtime workflow factory implementation.
@@ -45,7 +53,11 @@ impl WorkflowFactoryImpl {
 }
 
 impl WorkflowFactory for WorkflowFactoryImpl {
-    fn build(&self, executor: Arc<dyn Executor>) -> Arc<dyn WorkflowController> {
+    fn build(
+        &self,
+        executor: Arc<dyn Executor>,
+        runtime_context: Option<RuntimeContext>,
+    ) -> Arc<dyn WorkflowController> {
         Arc::new(crate::workflow::engine::WorkflowService::new(
             self.planner.clone(),
             self.memory.clone(),
@@ -54,6 +66,7 @@ impl WorkflowFactory for WorkflowFactoryImpl {
             self.reflection.clone(),
             executor,
             self.event_bus.clone(),
+            runtime_context,
         ))
     }
 }

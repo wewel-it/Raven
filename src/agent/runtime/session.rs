@@ -50,7 +50,6 @@ impl SessionManager {
         guard.insert(id.clone(), s);
         id
     }
-    
 
     pub fn get(&self, id: &str) -> Option<Session> {
         let r = self.inner.read().unwrap();

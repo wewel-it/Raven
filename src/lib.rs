@@ -14,10 +14,12 @@ pub mod error;
 pub mod event;
 pub mod executor;
 pub mod intent;
+pub mod knowledge;
 pub mod llm;
 pub mod memory;
 pub mod planner;
 pub mod reflection;
+pub mod telemetry;
 pub mod tool;
 pub mod workflow;
 
@@ -25,10 +27,14 @@ pub use error::{RavenError, RavenResult};
 pub use event::{AgentEvent, EventBus};
 pub use executor::ExecutorService;
 pub use intent::IntentAnalyzer;
+pub use knowledge::{
+    KnowledgeManager, KnowledgeManagerImpl, KnowledgePipelineBuilder, KnowledgeResult,
+};
 pub use llm::SimpleLlm;
 pub use memory::MemoryService;
 pub use planner::PlannerService;
 pub use reflection::ReflectionService;
+pub use telemetry::{OpenTelemetryExporter, PrometheusExporter, TelemetryExporter};
 pub use tool::ToolService;
 pub use workflow::engine::WorkflowService;
 pub use workflow::state::{WorkflowState, WorkflowStatus};

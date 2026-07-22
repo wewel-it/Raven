@@ -1,4 +1,4 @@
-use crate::agent::runtime::metrics::RuntimeMetrics;
+use crate::agent::runtime::metrics::RuntimeMetricsSnapshot;
 use crate::agent::runtime::state::LifecycleState;
 use chrono::{DateTime, Utc};
 
@@ -7,7 +7,7 @@ pub struct RuntimeReport {
     pub status: LifecycleState,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
-    pub metrics: RuntimeMetrics,
+    pub metrics: RuntimeMetricsSnapshot,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
 }
@@ -18,7 +18,7 @@ impl RuntimeReport {
             status,
             started_at: Utc::now(),
             finished_at: None,
-            metrics: RuntimeMetrics::new(),
+            metrics: RuntimeMetricsSnapshot::new(),
             warnings: Vec::new(),
             errors: Vec::new(),
         }

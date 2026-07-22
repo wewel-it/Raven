@@ -5,12 +5,16 @@ use super::recovery::RecoveryManager;
 use super::retry::RetryManager;
 use super::scheduler::Scheduler;
 use super::traits::{WorkflowFactory, WorkflowFactoryImpl};
+use crate::agent::runtime::metrics::{
+    InMemoryMetricsCollector, RuntimeMetricsCollector, TelemetryMetricsCollector,
+};
 use crate::event::EventBus;
 use crate::executor::Executor;
+use crate::knowledge::KnowledgeManager;
 use crate::llm::Llm;
 use crate::memory::MemoryStorage;
-use crate::planner::PlannerProgress;
 use crate::reflection::ReflectionEvaluator;
+use crate::telemetry::TelemetryExporter;
 use crate::tool::ToolManagerService;
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +22,7 @@ use std::sync::{Arc, Mutex};
 /// place where concrete dependencies are wired and registered.
 pub struct AgentRuntimeBuilder {
     event_bus: Option<Arc<EventBus>>,
-    planner: Option<Arc<dyn PlannerProgress + Send + Sync>>,
+    planner: Option<Arc<dyn crate::planner::PlannerProgress + Send + Sync>>,
     memory: Option<Arc<Mutex<Box<dyn MemoryStorage>>>>,
     workflow_factory: Option<Arc<dyn WorkflowFactory>>,
     tools: Option<Arc<Mutex<Box<dyn ToolManagerService>>>>,
@@ -28,6 +32,9 @@ pub struct AgentRuntimeBuilder {
     retry: Option<Arc<RetryManager>>,
     recovery: Option<Arc<RecoveryManager>>,
     scheduler: Option<Arc<Scheduler>>,
+    metrics: Option<Arc<dyn RuntimeMetricsCollector>>,
+    telemetry_exporter: Option<Arc<dyn TelemetryExporter>>,
+    knowledge_manager: Option<Arc<dyn KnowledgeManager>>,
 }
 
 impl AgentRuntimeBuilder {
@@ -44,6 +51,9 @@ impl AgentRuntimeBuilder {
             retry: None,
             recovery: None,
             scheduler: None,
+            metrics: None,
+            telemetry_exporter: None,
+            knowledge_manager: None,
         }
     }
 
@@ -52,7 +62,10 @@ impl AgentRuntimeBuilder {
         self
     }
 
-    pub fn with_planner(mut self, planner: Arc<dyn PlannerProgress + Send + Sync>) -> Self {
+    pub fn with_planner(
+        mut self,
+        planner: Arc<dyn crate::planner::PlannerProgress + Send + Sync>,
+    ) -> Self {
         self.planner = Some(planner);
         self
     }
@@ -103,6 +116,21 @@ impl AgentRuntimeBuilder {
         self
     }
 
+    pub fn with_metrics(mut self, metrics: Arc<dyn RuntimeMetricsCollector>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    pub fn with_telemetry_exporter(mut self, exporter: Arc<dyn TelemetryExporter>) -> Self {
+        self.telemetry_exporter = Some(exporter);
+        self
+    }
+
+    pub fn with_knowledge_manager(mut self, knowledge_manager: Arc<dyn KnowledgeManager>) -> Self {
+        self.knowledge_manager = Some(knowledge_manager);
+        self
+    }
+
     /// Build AgentRuntimeService; returns Err if required dependencies missing.
     pub fn build(self) -> Result<AgentRuntimeService, String> {
         let bus = self
@@ -126,14 +154,41 @@ impl AgentRuntimeBuilder {
             .recovery
             .unwrap_or_else(|| Arc::new(RecoveryManager::new()));
         let scheduler = self.scheduler.unwrap_or_else(|| Arc::new(Scheduler::new()));
+        let knowledge_manager = self.knowledge_manager;
 
         let events = RuntimeEvents::new(bus.clone());
         let mut dispatcher = self.dispatcher;
         dispatcher = dispatcher.with_event_bus(bus.clone());
 
+        let metrics: Arc<dyn RuntimeMetricsCollector> = match self.metrics {
+            Some(m) => {
+                if let Some(exporter) = &self.telemetry_exporter {
+                    Arc::new(TelemetryMetricsCollector::new(
+                        m.clone(),
+                        Some(exporter.clone()),
+                    ))
+                } else {
+                    m.clone()
+                }
+            }
+            None => {
+                let default = Arc::new(InMemoryMetricsCollector::new());
+                if let Some(exporter) = &self.telemetry_exporter {
+                    Arc::new(TelemetryMetricsCollector::new(
+                        default,
+                        Some(exporter.clone()),
+                    ))
+                } else {
+                    default
+                }
+            }
+        };
+
+        dispatcher = dispatcher.with_metrics(metrics.clone());
+
         let workflow_factory = self.workflow_factory.unwrap_or_else(|| {
             Arc::new(WorkflowFactoryImpl::new(
-                planner.clone(),
+                planner.clone() as Arc<dyn crate::planner::PlannerProgress + Send + Sync>,
                 memory.clone(),
                 tools.clone(),
                 llm.clone(),
@@ -154,6 +209,8 @@ impl AgentRuntimeBuilder {
             retry,
             recovery,
             scheduler,
+            metrics,
+            knowledge_manager,
         ))
     }
 }

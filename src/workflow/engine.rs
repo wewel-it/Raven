@@ -1,3 +1,4 @@
+use crate::agent::runtime::context::RuntimeContext;
 use crate::error::{RavenError, RavenResult};
 use crate::event::{AgentEvent, EventBus};
 use crate::executor::Executor;
@@ -27,6 +28,7 @@ pub struct WorkflowService {
     reflection: Arc<dyn ReflectionEvaluator>,
     executor: Arc<dyn Executor>,
     event_bus: Arc<EventBus>,
+    runtime_context: Option<RuntimeContext>,
     status: Arc<Mutex<WorkflowStatus>>,
     /// Persistent execution plan snapshot.
     plan: Arc<Mutex<Option<ExecutionPlan>>>,
@@ -48,6 +50,7 @@ impl WorkflowService {
         reflection: Arc<dyn ReflectionEvaluator>,
         executor: Arc<dyn Executor>,
         event_bus: Arc<EventBus>,
+        runtime_context: Option<RuntimeContext>,
     ) -> Self {
         Self {
             planner,
@@ -57,6 +60,7 @@ impl WorkflowService {
             reflection,
             executor,
             event_bus,
+            runtime_context,
             status: Arc::new(Mutex::new(WorkflowStatus::new())),
             plan: Arc::new(Mutex::new(None)),
         }
@@ -216,6 +220,15 @@ impl WorkflowService {
                 .map_err(|e| RavenError::LockPoisoned(e.to_string()))?;
             status_guard.update_state(WorkflowState::Running);
             status_guard.mark_current_step(None, None);
+        }
+
+        if let Some(ctx) = &self.runtime_context {
+            if let Some(kctx) = &ctx.knowledge_context {
+                let _ = log::info!(
+                    "Workflow starting with retrieved knowledge summary: {}",
+                    kctx.summary()
+                );
+            }
         }
 
         let result = self.executor.execute_plan(&plan);

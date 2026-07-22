@@ -5,6 +5,8 @@ use super::report::RuntimeReport;
 use super::retry::RetryManager;
 use super::scheduler::Scheduler;
 use super::traits::WorkflowFactory;
+use crate::agent::runtime::context::RuntimeContext;
+use crate::agent::runtime::metrics::RuntimeMetricsCollector;
 use crate::error::{RavenError, RavenResult};
 use crate::llm::Llm;
 use crate::memory::{MemoryKind, MemoryStorage};
@@ -14,6 +16,7 @@ use crate::reflection::ReflectionEvaluator;
 use crate::tool::ToolManagerService;
 use log::{error, info};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 /// AgentRuntimeService: orchestrates subsystems to run a plan end-to-end.
 pub struct AgentRuntimeService {
@@ -28,6 +31,8 @@ pub struct AgentRuntimeService {
     retry: Arc<RetryManager>,
     recovery: Arc<RecoveryManager>,
     scheduler: Arc<Scheduler>,
+    metrics: Arc<dyn RuntimeMetricsCollector>,
+    knowledge_manager: Option<Arc<dyn crate::knowledge::KnowledgeManager>>,
 }
 
 impl AgentRuntimeService {
@@ -44,6 +49,8 @@ impl AgentRuntimeService {
         retry: Arc<RetryManager>,
         recovery: Arc<RecoveryManager>,
         scheduler: Arc<Scheduler>,
+        metrics: Arc<dyn RuntimeMetricsCollector>,
+        knowledge_manager: Option<Arc<dyn crate::knowledge::KnowledgeManager>>,
     ) -> Self {
         Self {
             events,
@@ -57,6 +64,8 @@ impl AgentRuntimeService {
             retry,
             recovery,
             scheduler,
+            metrics,
+            knowledge_manager,
         }
     }
 
@@ -72,16 +81,67 @@ impl AgentRuntimeService {
             .map(|s| format!("workflow-{}", s.id))
             .unwrap_or_else(|| "workflow-unknown".to_string());
 
+        // Metrics: mark workflow started and record planner call
+        self.metrics.incr(
+            "workflow_started",
+            Some(&[("workflow_id", workflow_id.as_str())]),
+        );
+        let run_start = Instant::now();
+
         self.events
             .publish(crate::event::AgentEvent::WorkflowStarted {
                 workflow_id: workflow_id.clone(),
             });
 
+        let mut plan = plan.clone();
+
+        // Build runtime context and enrich it with retrieved knowledge if available.
+        let mut runtime_context = RuntimeContext::new(
+            "session-unknown",
+            plan.steps
+                .first()
+                .map(|s| s.description.clone())
+                .unwrap_or_default(),
+        );
+
+        if let Some(knowledge_manager) = self.knowledge_manager.as_ref() {
+            if let Some(first) = plan.steps.first() {
+                let query = &first.description;
+                let k_start = Instant::now();
+                match knowledge_manager.retrieve(query, 5) {
+                    Ok(knowledge_context) => {
+                        let k_dur = k_start.elapsed();
+                        self.metrics.record_duration(
+                            "knowledge_retrieve_latency",
+                            k_dur,
+                            Some(&[("workflow_id", workflow_id.as_str())]),
+                        );
+                        let summary = knowledge_context.summary();
+                        runtime_context = runtime_context.with_knowledge_context(knowledge_context);
+                        for step in plan.steps.iter_mut() {
+                            step.metadata
+                                .insert("knowledge_summary".to_string(), summary.clone());
+                        }
+                    }
+                    Err(err) => {
+                        error!("knowledge retrieval failed: {}", err);
+                    }
+                }
+            }
+        }
+
         // Use memory to retrieve contextual items related to the plan's first step
         if let Ok(mem_guard) = self.memory.lock() {
             if let Some(first) = plan.steps.first() {
                 let query = &first.description;
+                let mem_start = Instant::now();
                 let _ctx = mem_guard.retrieve(query, None, 5);
+                let mem_dur = mem_start.elapsed();
+                self.metrics.record_duration(
+                    "memory_retrieve_latency",
+                    mem_dur,
+                    Some(&[("workflow_id", workflow_id.as_str())]),
+                );
             }
         }
 
@@ -92,10 +152,21 @@ impl AgentRuntimeService {
         }
 
         // Validate and schedule plan
+        let sched_start = Instant::now();
         let scheduled = self
             .scheduler
-            .schedule(plan)
+            .schedule(&plan)
             .map_err(|e| RavenError::Planner(format!("scheduler error: {}", e)))?;
+        let sched_dur = sched_start.elapsed();
+        self.metrics.record_duration(
+            "scheduler_latency",
+            sched_dur,
+            Some(&[("workflow_id", workflow_id.as_str())]),
+        );
+
+        if let Some(_) = runtime_context.knowledge_context.as_ref() {
+            runtime_context = runtime_context.with_plan(scheduled.clone());
+        }
 
         // Load the scheduled plan into progress tracking before execution.
         self.planner
@@ -111,6 +182,10 @@ impl AgentRuntimeService {
                 .dispatcher
                 .select_executor(&scheduled)
                 .ok_or_else(|| RavenError::Configuration("no suitable executor found".into()))?;
+            self.metrics.incr(
+                "dispatcher_calls",
+                Some(&[("workflow_id", workflow_id.as_str())]),
+            );
 
             // Optionally inspect tools registry for the first step
             if let Some(first) = scheduled.steps.first() {
@@ -123,7 +198,9 @@ impl AgentRuntimeService {
             }
 
             // Build workflow controller via injected factory.
-            let workflow_controller = self.workflow_factory.build(executor.clone());
+            let workflow_controller = self
+                .workflow_factory
+                .build(executor.clone(), Some(runtime_context.clone()));
             let res = workflow_controller.start(scheduled.clone());
             match res {
                 Ok(s) => {
@@ -145,6 +222,18 @@ impl AgentRuntimeService {
                         );
                     }
 
+                    // Metrics: success
+                    let run_dur = run_start.elapsed();
+                    self.metrics.record_duration(
+                        "workflow_duration",
+                        run_dur,
+                        Some(&[("workflow_id", workflow_id.as_str())]),
+                    );
+                    self.metrics.incr(
+                        "workflow_finished",
+                        Some(&[("workflow_id", workflow_id.as_str())]),
+                    );
+
                     self.events
                         .publish(crate::event::AgentEvent::WorkflowFinished {
                             workflow_id: workflow_id.clone(),
@@ -154,10 +243,30 @@ impl AgentRuntimeService {
                 }
                 Err(e) => {
                     error!("AgentRuntime plan failed attempt {}: {}", attempt, e);
-                    if self.retry.should_retry(attempt) {
-                        self.recovery.recover(&e.to_string());
-                        info!("Retrying workflow plan, attempt {}", attempt + 1);
-                        continue;
+                    // Metrics: failure and retry decision
+                    self.metrics.incr(
+                        "workflow_failed",
+                        Some(&[("workflow_id", workflow_id.as_str())]),
+                    );
+                    // Ask RetryManager for decision
+                    let ctx = crate::agent::runtime::retry::RetryContext {
+                        step_id: workflow_id.clone(),
+                        attempts: attempt,
+                        max_attempts: self.retry.max_attempts,
+                    };
+                    match self.retry.decide(&ctx) {
+                        crate::agent::runtime::retry::RetryDecision::Retry { next_backoff: _ } => {
+                            self.metrics.incr(
+                                "workflow_retry",
+                                Some(&[("workflow_id", workflow_id.as_str())]),
+                            );
+                            self.recovery.recover(&e.to_string());
+                            info!("Retrying workflow plan, attempt {}", attempt + 1);
+                            continue;
+                        }
+                        crate::agent::runtime::retry::RetryDecision::Fail => {
+                            // fallthrough to final failure handling below
+                        }
                     }
 
                     // On final failure, still evaluate and commit reflection to memory
@@ -168,6 +277,18 @@ impl AgentRuntimeService {
                             .reflection
                             .commit(mem_guard.as_ref(), reflection_report);
                     }
+
+                    // Metrics: final failure
+                    self.metrics.incr(
+                        "workflow_failed_final",
+                        Some(&[("workflow_id", workflow_id.as_str())]),
+                    );
+                    let run_dur = run_start.elapsed();
+                    self.metrics.record_duration(
+                        "workflow_duration",
+                        run_dur,
+                        Some(&[("workflow_id", workflow_id.as_str())]),
+                    );
 
                     self.events
                         .publish(crate::event::AgentEvent::WorkflowFinished {
@@ -183,5 +304,10 @@ impl AgentRuntimeService {
     /// Access the runtime dispatcher for executor selection and inspection.
     pub fn dispatcher(&self) -> &Dispatcher {
         &self.dispatcher
+    }
+
+    /// Retrieve the injected knowledge manager, if one is configured.
+    pub fn knowledge_manager(&self) -> Option<&Arc<dyn crate::knowledge::KnowledgeManager>> {
+        self.knowledge_manager.as_ref()
     }
 }

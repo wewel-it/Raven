@@ -34,6 +34,7 @@ fn workflow_service_lifecycle_controls() {
         Arc::new(reflection),
         executor,
         Arc::clone(&event_bus),
+        None,
     );
 
     let plan_res = PlannerService::new("test-planner").create_plan(&crate::intent::Intent {
