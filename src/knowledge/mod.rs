@@ -9,6 +9,7 @@ pub mod chunk;
 pub mod chunker;
 pub mod context;
 pub mod document;
+pub mod embedding;
 pub mod errors;
 pub mod hash;
 pub mod loader;
@@ -22,6 +23,9 @@ pub mod validator;
 
 pub use builder::KnowledgePipelineBuilder;
 pub use context::KnowledgeContext;
+pub use embedding::{
+    EmbeddingCache, EmbeddingEngine, EmbeddingError, LocalEmbeddingEngine, TfidfEmbeddingModel,
+};
 pub use errors::KnowledgeResult;
 pub use manager::KnowledgeManagerImpl;
 pub use retrieval::{KnowledgeRetrievalEngine, RetrievalResult, SemanticRetrievalEngine};
