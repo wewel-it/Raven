@@ -134,7 +134,9 @@ impl LocalEmbeddingEngine {
             return Err(EmbeddingError::InvalidInput("documents empty".to_string()));
         }
         let mut new_model = TfidfEmbeddingModel::new();
-        new_model.fit(documents).map_err(EmbeddingError::EmbeddingFailed)?;
+        new_model
+            .fit(documents)
+            .map_err(EmbeddingError::EmbeddingFailed)?;
         let mut guard = self
             .model
             .lock()

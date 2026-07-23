@@ -96,10 +96,7 @@ impl HybridRetrievalEngine {
         let mut map: HashMap<String, (f32, f32, SearchResult)> = HashMap::new();
 
         for sr in &semantic_results.results {
-            map.insert(
-                sr.vector_id.clone(),
-                (sr.similarity_score, 0.0, sr.clone()),
-            );
+            map.insert(sr.vector_id.clone(), (sr.similarity_score, 0.0, sr.clone()));
         }
 
         for kr in &keyword_results.results {
@@ -123,17 +120,24 @@ impl HybridRetrievalEngine {
         let mut by_doc: HashMap<String, SearchResult> = HashMap::new();
         for r in fused.into_iter() {
             let doc_id = r.metadata.get("document_id").cloned().unwrap_or_default();
-            by_doc.entry(doc_id).and_modify(|existing| {
-                if r.similarity_score > existing.similarity_score {
-                    *existing = r.clone();
-                }
-            }).or_insert(r);
+            by_doc
+                .entry(doc_id)
+                .and_modify(|existing| {
+                    if r.similarity_score > existing.similarity_score {
+                        *existing = r.clone();
+                    }
+                })
+                .or_insert(r);
         }
 
         let mut results: Vec<SearchResult> = by_doc.into_values().collect();
 
         // Sort by hybrid score desc
-        results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.similarity_score
+                .partial_cmp(&a.similarity_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let total = results.len();
         results.truncate(limit);

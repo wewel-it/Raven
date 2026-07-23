@@ -44,7 +44,10 @@ impl Default for MultiWeights {
 impl SearchResultReranker {
     /// Create a new reranker with the specified strategy.
     pub fn new(strategy: RerankingStrategy) -> Self {
-        Self { strategy, multi_weights: MultiWeights::default() }
+        Self {
+            strategy,
+            multi_weights: MultiWeights::default(),
+        }
     }
 
     /// Re-rank a search result set.
@@ -101,7 +104,11 @@ impl SearchResultReranker {
         }
 
         // Sort by new score
-        results.results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.results.sort_by(|a, b| {
+            b.similarity_score
+                .partial_cmp(&a.similarity_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 

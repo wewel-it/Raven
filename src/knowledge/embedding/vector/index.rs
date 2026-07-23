@@ -5,9 +5,9 @@
 // to be replaceable by a more advanced index (KD-tree, HNSW) in future.
 
 use crate::knowledge::embedding::similarity::SimilarityMetric;
-use crate::knowledge::embedding::vector::DenseVector;
 use crate::knowledge::embedding::vector::search::{SearchResult, SearchResultSet};
 use crate::knowledge::embedding::vector::storage::{StoredVector, VectorStorage};
+use crate::knowledge::embedding::vector::DenseVector;
 use std::sync::{Arc, Mutex};
 
 /// A production-ready vector index for similarity search.
@@ -89,7 +89,12 @@ impl VectorIndex {
     }
 
     /// Search for the K nearest neighbors of a query vector (default options).
-    pub fn search(&self, query: &DenseVector, k: usize, query_text: &str) -> Result<SearchResultSet, String> {
+    pub fn search(
+        &self,
+        query: &DenseVector,
+        k: usize,
+        query_text: &str,
+    ) -> Result<SearchResultSet, String> {
         self.search_with_options(query, k, query_text, &SearchOptions::default())
     }
 
@@ -177,17 +182,30 @@ impl VectorIndex {
         }
 
         // Sort and take top-k
-        results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.similarity_score
+                .partial_cmp(&a.similarity_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         let total_candidates = results.len();
         results.truncate(k);
 
-        Ok(SearchResultSet::new(results, query_text.to_string(), total_candidates, total_candidates))
+        Ok(SearchResultSet::new(
+            results,
+            query_text.to_string(),
+            total_candidates,
+            total_candidates,
+        ))
     }
 
     /// Batch insert multiple vectors.
     pub fn batch_insert(
         &mut self,
-        entries: Vec<(String, DenseVector, crate::knowledge::embedding::vector::metadata::VectorMetadata)>,
+        entries: Vec<(
+            String,
+            DenseVector,
+            crate::knowledge::embedding::vector::metadata::VectorMetadata,
+        )>,
     ) -> Result<usize, String> {
         let dim = entries.first().map(|(_, v, _)| v.dimension()).unwrap_or(0);
         if dim == 0 && !entries.is_empty() {
@@ -235,8 +253,8 @@ impl VectorIndex {
     pub fn persist(&self, path: &str) -> Result<(), String> {
         let storage = self.storage.lock().map_err(|e| e.to_string())?;
         let all = storage.all_stored();
-        let data = serde_json::to_string(&all)
-            .map_err(|e| format!("Serialization error: {}", e))?;
+        let data =
+            serde_json::to_string(&all).map_err(|e| format!("Serialization error: {}", e))?;
         std::fs::write(path, data).map_err(|e| format!("IO error: {}", e))?;
         Ok(())
     }
@@ -244,8 +262,8 @@ impl VectorIndex {
     /// Load index from a file (deserialization).
     pub fn load(&mut self, path: &str) -> Result<usize, String> {
         let data = std::fs::read_to_string(path).map_err(|e| format!("IO error: {}", e))?;
-        let vectors: Vec<StoredVector> = serde_json::from_str(&data)
-            .map_err(|e| format!("Deserialization error: {}", e))?;
+        let vectors: Vec<StoredVector> =
+            serde_json::from_str(&data).map_err(|e| format!("Deserialization error: {}", e))?;
 
         let mut storage = self.storage.lock().map_err(|e| e.to_string())?;
         storage.clear();
